@@ -39,6 +39,10 @@ class ApiManager(metaclass=Singleton):
         Returns:
         str: The AI's response.
         """
+        # print('#'*100)
+        # print('MESSAGES')
+        # print(messages)
+        # print('#'*100)
         cfg = Config()
         if temperature is None:
             temperature = cfg.temperature

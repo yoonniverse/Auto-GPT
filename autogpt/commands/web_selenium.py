@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from sys import platform
+import json
 
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -56,53 +57,24 @@ def browse_website(url: str, question: str) -> str:
     """    
     global URL_MEMORY
     if url in URL_MEMORY: 
-        #print(url, '->', URL_MEMORY[url])
+        print(url, '->', URL_MEMORY[url])
         url = URL_MEMORY[url]
-
-    # qestion을 해결하기 위해 search가 필요할 경우 search_url로 변경합니다.    
-    request_msg = f"""
-        search_url is used in mobile web browsers.
-        "input_url": "{url}"
-        "question": "{question}"
-        If a search is needed to solve it, 
-        {{"search_url": "..."}}
-        If a seach is not needed, please answer as below.
-        {{"search_url": None}}"""
-    """resp = create_chat_completion(
-        model=CFG.smart_llm_model,
-        messages=[{"role":"user", "content":request_msg}])
-    try:
-        resp = eval(resp)
-        search_url = resp['search_url']
-        print(f'search_url:{search_url}')
-        if search_url:
-            url = search_url
-    except:
-        pass
-    """
     
-    try:
-        html_content, driver = get_html_content_with_selenium(url)
-    except WebDriverException as e:
-        msg = e.msg.split("\n")[0]
-        return f"Error: {msg}", None
-    
+    html_content, driver = get_html_content_with_selenium(url)
+    # try:
+    #     html_content, driver = get_html_content_with_selenium(url)
+    # except WebDriverException as e:
+    #     msg = e.msg.split("\n")[0]
+    #     return f"Error: {msg}", None
     text_link_pairs = []
     text_link_pairs.extend(get_header_text_link_pairs(html_content, url))
-    text_link_pairs.extend(get_main_content_text_llink_pairs(html_content))
-    #text_list, _ = zip(*text_link_pairs)    
-    #add_header(driver)
-    #suggested_next_item = what_should_do_next(text_list, question)    
-    #return_msg = get_links_related_to_question_with_chat(text_link_pairs, suggested_next_item)
-    #suggested_next_item2 = what_should_do_next2(suggested_next_item, return_msg)
+    text_link_pairs.extend(get_main_content_text_link_pairs(html_content, url))
+    # trafilatura_html = trafilatura.fetch_url(url)
+    # metadata = trafilatura.extract_metadata(trafilatura_html).as_dict()
     return_msg = get_links_related_to_question_with_chat(text_link_pairs, question)
     close_browser(driver)
 
-    #print('URL_MEMORY_STATE', URL_MEMORY)    
-    
     return return_msg
-    #return return_msg
-
 
 @command(
     "get_webpage_text_summary",
@@ -112,41 +84,37 @@ def browse_website(url: str, question: str) -> str:
 def get_webpage_text_summary(url: str, question: str, max_len=3500) -> str:
     global URL_MEMORY
     if url in URL_MEMORY:
-        #print(url, URL_MEMORY[url])
+        print(url, URL_MEMORY[url])
         url = URL_MEMORY[url]
-    try:
-        html_content, driver = get_html_content_with_selenium(url)
-    except WebDriverException as e:
-        # These errors are often quite long and include lots of context.
-        # Just grab the first line.
-        msg = e.msg.split("\n")[0]
-        return f"Error: {msg}"
-
-    #add_header(driver)
-    #scroll_to_percentage(driver, scroll_ratio * i)
-    #summary_text = summary.summarize_text(url, text, driver)
-    text = trafilatura.extract(html_content, include_formatting=True, favor_recall=False)
+    html_content, driver = get_html_content_with_selenium(url)
+    # try:
+    #     html_content, driver = get_html_content_with_selenium(url)
+    # except WebDriverException as e:
+    #     # These errors are often quite long and include lots of context.
+    #     # Just grab the first line.
+    #     msg = e.msg.split("\n")[0]
+    #     return f"Error: {msg}"
+    
+    text = trafilatura.extract(html_content, favor_recall=False)
     
     text = text[:max_len]
-    main_lang = get_main_language(text)
-    request_msg = (        
-        f'Please summarize the webpage text in {main_lang}, with reference to "{question}":\n\n'
-        f'{text}'        
-    )
+    # main_lang = get_main_language(text)
+    request_msg = f"""
+```
+{text}
+```
+Summarize above text with reference to "{question}". Answer in language the text is written in.
+Summary:
+"""
     resp = create_chat_completion(
         model=CFG.fast_llm_model,
         messages=[{"role":"user", "content":request_msg}])
-    return f'Webpage summary: {resp}  '
+    return f'Webpage summary: {resp}'
 
 
 def get_header_text_link_pairs(html_content, base_url='http:'):
-    # BeautifulSoup 객체 생성
     soup = BeautifulSoup(html_content, 'html.parser')
-
-    # 이름이 'header'를 포함하거나, 'id'가 'header'를 포함하는 모든 태그 찾기
     header_tags = soup.find_all(lambda tag: 'header' in tag.name or ('header' in tag.get('id', '')))
-
-    # 태그의 텍스트, href 속성 값
     text_link_pairs = []
     for header in header_tags:
         for descendant in header.descendants:
@@ -154,39 +122,22 @@ def get_header_text_link_pairs(html_content, base_url='http:'):
                 url = urljoin(base_url, descendant['href'])  # 상대 URL을 절대 URL로 변환
                 pair = (f"menu: {descendant.get_text(strip=True)}", f"{url}")
                 if pair not in text_link_pairs:
-                    text_link_pairs.append(pair)  # append 대신 add 사용
-            
-    return list(text_link_pairs)  # 최종적으로 다시 리스트로 변환
+                    text_link_pairs.append(pair)
+    return list(text_link_pairs)
 
 
-def get_main_content_text_llink_pairs(html_content):
-    text = trafilatura.extract(html_content, include_links=True, include_formatting=True, favor_recall=True,
-                         output_format='txt')
-    
-    # Text를 라인 단위로 분리
+def get_main_content_text_link_pairs(html_content, base_url):
+    text = trafilatura.extract(html_content, include_links=True, include_formatting=True, favor_recall=True,output_format='txt')
     lines = text.split('\n')
-
-    # '[...](...)' 형식의 텍스트 추출
-    # 정규표현식 패턴 정의
     pattern = r'\[(.*?)\]\((.*?)\)'
-    
-    # 텍스트와 링크를 담을 리스트 초기화
     t_link_pairs = []
-    
-    # 각 라인에 대해
     for line in lines:
-        # 텍스트에서 패턴에 맞는 부분 찾기
         matches = re.findall(pattern, line)        
-
-        # 각 매치에 대해, 가장 첫번째 것만 가져온다.
         for match in matches:
-            # match는 (텍스트, 링크) 형태의 튜플
             t, link = match
-            if t != '':
-                # 링크의 유효성 검사
-                parsed_link = urlparse(link)
-                if parsed_link.scheme and parsed_link.netloc and match not in t_link_pairs:
-                    t_link_pairs.append(match)
+            link = urljoin(base_url, link)
+            if (t != '') and (match not in t_link_pairs):
+                 t_link_pairs.append((t, link))
     return t_link_pairs
 
 
@@ -199,61 +150,6 @@ def get_main_language(text):
     return language
 
 
-def summarize_text_with_question(text: str, question: str, max_len=3500) -> str:
-    text = text[:max_len]
-    #request_msg = (
-    #    'The following text is extracted from a webpage. Please briefly answer whether it contains the necessary information to resolve the question.\n\n'
-    #    f'{text} \n\n'
-    #    f'-- question:{question}'
-    #)
-    request_msg = (f'"""{text}""" Using the above text, answer the following'
-        f' question: "{question}" -- if the question cannot be answered using the text,'
-        " summarize the text. Please output in the language used in the above text."
-    )
-    
-    resp = create_chat_completion(
-        model=CFG.fast_llm_model,
-        messages=[{"role":"user", "content":request_msg}])
-    return f'Website summary: {resp}  '
-
-def what_should_do_next(text_list: str, question: str, max_len=3500) -> str:
-    cleaned_text = []
-    for sent in text_list:
-        sent = " ".join(sent.split())
-        if len(sent) == 0: continue
-        if len(sent)>20:
-            sent = sent[:20] + '...'
-        cleaned_text.append(sent)
-    cleaned_text = "\n".join(cleaned_text)    
-    
-    text = cleaned_text[:max_len]
-    
-    request_msg = (
-        f'{text}\n\n'
-        'Currently, we are conducting a web search. In the meantime, the text above has been retrieved from a website where menus and contents are listed. '
-        'And they all contain hyperlinks. '
-        f'What should we do next to find an """{question}"""?". Please answer shortly.'
-    )
-    
-    resp = create_chat_completion(
-        model=CFG.fast_llm_model,
-        messages=[{"role":"user", "content":request_msg}])
-    return f'suggested_next_item: {resp}  '
-
-def what_should_do_next2(suggested_item: str, found_link: str) -> str:
-    
-    request_msg = (
-        f'당신이 "{suggested_item}"을 제안하여,'
-        f'"{found_link}" 의 결과를 가져왔습니다. '        
-        f'What should we do next to do. Please answer shortly.'
-    )
-    
-    resp = create_chat_completion(
-        model=CFG.fast_llm_model,
-        messages=[{"role":"user", "content":request_msg}])
-    return f'suggested_next_item: {resp}  '
-    
-
 def get_links_related_to_question_with_chat(links: list[tuple[str, str]], question: str) -> str:
     global URL_MEMORY
     link_texts, hyperlinks = zip(*links)
@@ -263,27 +159,32 @@ def get_links_related_to_question_with_chat(links: list[tuple[str, str]], questi
         if len(sent) == 0: continue
         if len(sent)>20:
             sent = sent[:20] + '...'
-        cleaned_text.append(f'{i}: {sent}')     
+        cleaned_text.append(f'{i}: `{sent}`')     
     text = "\n".join(cleaned_text)
     text = text[:3500]
-    #ntokens = count_message_tokens([{"role": "user", "content": cleaned_text}], CFG.smart_llm_model)
-
-    request_msg = (
-        f'{text}'
-        '\n\nThe text above is extracted from hyperlinks found on a webpage.'
-        f'\n\nFor the question: "{question}", please answer using the following response format.'
-        '\n\nResponse Format: {"related_line_numbers": []}'
-    )
+    request_msg = f"""
+Hyperlinks:
+```
+{text}
+```
+You are currently browsing the webpage with above hyperlinks. 
+Your goal is to solve "{question}". First decide if the current webpage contain target links to solve the question. If not, plan your long term actions and navigate to links. Respond in following JSON format:
+{{
+    "does_current_webpage_contain_target_links": "yes/no",
+    "target_hyperlink_index": [],
+    "plan": "plan",
+    "hyperlink_index_to_navigate": []
+}}
+"""
     messages = [{"role": "user", "content": request_msg}]
 
-    resp = create_chat_completion(model=CFG.fast_llm_model, messages=messages)    
-
+    resp = create_chat_completion(model=CFG.smart_llm_model, messages=messages)    
     try:
-        resp = eval(resp)
-        line_numbers = resp['related_line_numbers']
-        line_numbers = [line_numbers] if isinstance(line_numbers, int) else line_numbers
+        resp = json.loads(resp)
+        line_numbers = resp['target_hyperlink_index'] + resp['hyperlink_index_to_navigate']
+        line_numbers = map(int, line_numbers)
     except:
-        line_numbers = [int(w) for w in resp.split() if w.isdigit()]
+        line_numbers = []
 
     selected_links = []
     
@@ -364,106 +265,6 @@ def get_html_content_with_selenium(url: str) -> tuple[str, str]:
     page_source = driver.execute_script("return document.body.outerHTML;")
     #soup = BeautifulSoup(page_source, "html.parser")
     return page_source, driver
-
-
-def scrape_text_with_selenium(url: str) -> tuple[WebDriver, str]:
-    """Scrape text from a website using selenium
-
-    Args:
-        url (str): The url of the website to scrape
-
-    Returns:
-        Tuple[WebDriver, str]: The webdriver and the text scraped from the website
-    """
-    logging.getLogger("selenium").setLevel(logging.CRITICAL)
-
-    options_available = {
-        "chrome": ChromeOptions,
-        "safari": SafariOptions,
-        "firefox": FirefoxOptions,
-    }
-
-    options = options_available[CFG.selenium_web_browser]()
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.5615.49 Safari/537.36"
-    )
-
-    if CFG.selenium_web_browser == "firefox":
-        if CFG.selenium_headless:
-            options.headless = True
-            options.add_argument("--disable-gpu")
-        driver = webdriver.Firefox(
-            executable_path=GeckoDriverManager().install(), options=options
-        )
-    elif CFG.selenium_web_browser == "safari":
-        # Requires a bit more setup on the users end
-        # See https://developer.apple.com/documentation/webkit/testing_with_webdriver_in_safari
-        driver = webdriver.Safari(options=options)
-    else:
-        if platform == "linux" or platform == "linux2":
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--remote-debugging-port=9222")
-
-        options.add_argument("--no-sandbox")
-        if CFG.selenium_headless:
-            options.add_argument("--headless=new")
-            options.add_argument("--disable-gpu")
-        
-        # 모바일 버전으로 쓰기 위해서 추가
-        user_agt = 'Mozilla/5.0 (Linux; Android 9; INE-LX1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Mobile Safari/537.36'
-        options.add_argument(f'user-agent={user_agt}')
-        options.add_argument("window-size=412,950")
-        options.add_experimental_option("mobileEmulation",
-                                        {"deviceMetrics": {"width": 360,
-                                                        "height": 760,
-                                                        "pixelRatio": 3.0}})
-
-        chromium_driver_path = Path("/usr/bin/chromedriver")
-
-        driver = webdriver.Chrome(
-            executable_path=chromium_driver_path
-            if chromium_driver_path.exists()
-            else ChromeDriverManager().install(),
-            options=options,
-        )
-    driver.get(url)
-
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.TAG_NAME, "body"))
-    )
-
-    # Get the HTML content directly from the browser's DOM
-    page_source = driver.execute_script("return document.body.outerHTML;")
-    soup = BeautifulSoup(page_source, "html.parser")
-
-    for script in soup(["script", "style"]):
-        script.extract()
-
-    text = soup.get_text()
-    lines = (line.strip() for line in text.splitlines())
-    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    text = "\n".join(chunk for chunk in chunks if chunk)
-    return driver, text
-
-
-def scrape_links_with_selenium(driver: WebDriver, url: str) -> list[str]:
-    """Scrape links from a website using selenium
-
-    Args:
-        driver (WebDriver): The webdriver to use to scrape the links
-
-    Returns:
-        List[str]: The links scraped from the website
-    """
-    page_source = driver.page_source
-    soup = BeautifulSoup(page_source, "html.parser")
-
-    for script in soup(["script", "style"]):
-        script.extract()
-
-    hyperlinks = extract_hyperlinks(soup, url)
-
-    return hyperlinks
 
 
 def close_browser(driver: WebDriver) -> None:
